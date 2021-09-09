@@ -15,6 +15,8 @@ warnings.filterwarnings("ignore")
 import argparse
 import numpy as np
 from tqdm import tqdm
+import timm
+import random
 
 
 #CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 torch_ddp.py
@@ -32,6 +34,14 @@ print(global_rank)
 
 # from tensorboardX import SummaryWriter
 # writer = SummaryWriter('food/runs/exp2')
+def set_seed(seed):
+    #必须禁用模型初始化中的任何随机性。
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    #torch.set_deterministic(True)
+set_seed(999)
 
 def reduce_loss(tensor, rank, world_size):
     with torch.no_grad():
@@ -61,46 +71,83 @@ image_transforms = {
 
 
 
+# THIS IS DATASET PATH AND PARAMS
+trainDatapath='/root/commonfile/foodH/train'
+valDatapath='/root/commonfile/foodH/test'
+BATCH_SIZE = 32
+NUM_CLASS = 2173
+LR = 0.01
 
-trainDatapath='../food100/train'
-valDatapath='../food100/test'
-BATCH_SIZE = 128
-NUM_CLASS = 85
 
-# Load Dataset
+# Load Dataset 
+# 2-8 分割
+# full_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
+# train_size=int(len(full_dataset)*0.9)
+# val_size=len(full_dataset)-train_size
+# train_dataset,val_dataset=torch.utils.data.random_split(full_dataset,[train_size,val_size])
+# 单独的 train test
 train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
 val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
-train_size=len(train_dataset)
-val_size=len(val_dataset)
-trainsampler = DistributedSampler(train_dataset)
-valsampler = DistributedSampler(val_dataset)
 
+
+trainsampler = DistributedSampler(train_dataset,rank=args.local_rank)
+valsampler = DistributedSampler(val_dataset,rank=args.local_rank)
+
+# train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
+# val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
 train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=4,pin_memory=True)
 val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=4,pin_memory=True)
-print("train size:",train_size,"; val size:",val_size)
+#print("train size:",train_size,"; val size:",val_size)
 
-resnet50 = models.resnet50(pretrained=True)
+#resnet50 = models.resnet50(pretrained=True)
+# 
+#resnet50  = timm.create_model('tresnet_m', pretrained=True,num_classes=85)
+resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
 
-fc_inputs = resnet50.fc.in_features
-resnet50.fc = nn.Sequential(
-    nn.Linear(fc_inputs, 512),
-    nn.ReLU(),
-    nn.Linear(512, 85),
-    nn.LogSoftmax(dim=1)
-)
+
 resnet50.cuda()
 resnet50 = torch.nn.SyncBatchNorm.convert_sync_batchnorm(resnet50)
 # Distributed to device
 resnet50 = DDP(resnet50, device_ids=[args.local_rank], output_device=args.local_rank)
 
 
-loss_function = nn.NLLLoss()
-
-
-optimizer = optim.SGD(resnet50.parameters(),lr=0.01,momentum=0.9)
+loss_function = nn.CrossEntropyLoss()
+optimizer = optim.SGD(resnet50.parameters(),lr=LR,momentum=0.9)
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.1)
 
+def WarmUp(model,optimizer,target_lr,iter):
+    print("Warm up for iterations of:",str(iter))
+    model.train()
+    begin_lr=1e-6
+    n_iter=0
+    while(n_iter < iter):
+        for i, (inputs, labels) in enumerate(train_data):
+            # Set learning rate by iter
+            # and update lr to warm up learning
+
+            lr=begin_lr+n_iter*(target_lr-begin_lr)/iter
+            optimizer.param_groups[0]['lr']=lr
+            n_iter += 1
+            if(n_iter>ietr):
+                break
+            
+
+            inputs = inputs.cuda()
+            labels = labels.cuda()
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = loss_function(outputs, labels)
+            loss.backward()
+            reduce_loss(loss, global_rank, world_size)
+            optimizer.step()
+    retrun 0
+
+
+
 def train_and_valid(model, optimizer, epochs=25):
+
+    # warmup
+    WarmUp(model,optimizer,LR,20000)
 
     history = []
     best_acc = 0.0
@@ -130,6 +177,9 @@ def train_and_valid(model, optimizer, epochs=25):
             #因为这里梯度是累加的，所以每次记得清零
             optimizer.zero_grad()
             outputs = model(inputs)
+            # batch*channel*class*prob ???
+            
+
             loss = loss_function(outputs, labels)
             
             loss.backward()
@@ -149,9 +199,11 @@ def train_and_valid(model, optimizer, epochs=25):
                 acc_topk = correct_counts/inputs.size(0)
                 etaTime=(time.time()-ttime)*(len(train_data)-i)/record_gap # not accurate
                 loss=loss.mean()
-                print("{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}".format(
-                    epoch,i,acc1*100,acc_topk*100,loss
+                ETAtime=(1-(i/len(train_data)))*(time.time()-ttime)*(len(train_dataset)/BATCH_SIZE)/record_gap/60
+                print("{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}\ttime:{:.2f}S\tETA:{:.2f}Min".format(
+                    epoch,i,acc1*100,acc_topk*100,loss,time.time()-ttime,ETAtime
                 ))
+                ttime=time.time()
 
         
         valid_loss = 0.0
@@ -207,6 +259,6 @@ def train_and_valid(model, optimizer, epochs=25):
         
     return model, history
 
-print("START TRAIN")
-num_epochs = 60
+print("[ START TRAIN ]")
+num_epochs = 100
 trained_model, history = train_and_valid(resnet50, optimizer, num_epochs)
