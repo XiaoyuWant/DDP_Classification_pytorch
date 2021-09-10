@@ -3,6 +3,7 @@ from torchvision import datasets, models, transforms
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset
 from torch import distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
@@ -10,6 +11,7 @@ from torch.utils.data.distributed import DistributedSampler
 import os
 import time
 import warnings
+import glob
 warnings.filterwarnings("ignore")
 # Tools
 import argparse
@@ -17,6 +19,7 @@ import numpy as np
 from tqdm import tqdm
 import timm
 import random
+from PIL import Image
 
 
 #CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 torch_ddp.py
@@ -74,9 +77,9 @@ image_transforms = {
 # THIS IS DATASET PATH AND PARAMS
 trainDatapath='/root/commonfile/foodH/train'
 valDatapath='/root/commonfile/foodH/test'
-BATCH_SIZE = 32
+BATCH_SIZE = 16*4
 NUM_CLASS = 2173
-LR = 0.01
+LR = 0.001
 
 
 # Load Dataset 
@@ -86,8 +89,53 @@ LR = 0.01
 # val_size=len(full_dataset)-train_size
 # train_dataset,val_dataset=torch.utils.data.random_split(full_dataset,[train_size,val_size])
 # 单独的 train test
-train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
-val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
+
+# For Large Dataset Need Write a new Dataloader because torchvision.ImageFolder has a problem
+class ImageDataset(torch.utils.data.Dataset):
+    def __init__(self, folder, klass, transform):
+        self._data = folder
+        self.klass = klass
+        self.transform=transform
+        #self.extension = extension
+        # Only calculate once how many files are in this folder
+        # Could be passed as argument if you precalculate it somehow
+        # e.g. ls | wc -l on Linux
+        self._length = sum(1 for entry in os.listdir(self._data))
+
+    def __len__(self):
+        # No need to recalculate this value every time
+        return self._length
+
+    def __getitem__(self, index):
+        # images always follow [0, n-1], so you access them directly
+        re=glob.glob(self._data+'/*')
+        img=Image.open(re[index])
+        img=transform(img)
+        return img,self.kclass
+        
+root="/root/commonfile/foodH/"
+
+folders=glob.glob(root+"train/*")
+index=0
+train_dataset=[]
+for folder in folders:
+    train_dataset.append(ImageDataset(folder,index,image_transforms['train']))
+    index+=1
+train_dataset=ConcatDataset(train_dataset)
+
+folders=glob.glob(root+"test/*")
+index=0
+val_dataset=[]
+for folder in folders:
+    val_dataset.append(ImageDataset(folder,index,image_transforms['val']))
+    index+=1
+val_dataset=ConcatDataset(val_dataset)
+
+
+
+
+# train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
+# val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
 
 
 trainsampler = DistributedSampler(train_dataset,rank=args.local_rank)
@@ -116,7 +164,8 @@ optimizer = optim.SGD(resnet50.parameters(),lr=LR,momentum=0.9)
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.1)
 
 def WarmUp(model,optimizer,target_lr,iter):
-    print("Warm up for iterations of:",str(iter))
+    if(args.local_rank==0):
+        print("Warm up for iterations of:",str(iter))
     model.train()
     begin_lr=1e-6
     n_iter=0
@@ -128,7 +177,10 @@ def WarmUp(model,optimizer,target_lr,iter):
             lr=begin_lr+n_iter*(target_lr-begin_lr)/iter
             optimizer.param_groups[0]['lr']=lr
             n_iter += 1
-            if(n_iter>ietr):
+            if(args.local_rank==0):
+                info="iter:\t{}\tlr:\t{:.5f}".format(n_iter,lr)
+                print('\r', info, end='', flush=True)
+            if(n_iter>iter):
                 break
             
 
@@ -147,25 +199,24 @@ def WarmUp(model,optimizer,target_lr,iter):
 def train_and_valid(model, optimizer, epochs=25):
 
     # warmup
-    WarmUp(model,optimizer,LR,20000)
+    #WarmUp(model,optimizer,LR,1000)
 
     history = []
     best_acc = 0.0
     best_epoch = 0
     
     for epoch in range(epochs):
-        epoch_start = time.time()
+        #epoch_start = time.time()
         print("Epoch: {}/{}".format(epoch+1, epochs))
+        print("This epoch is {} iterations".format(len(train_data)))
         model.train()
  
-        train_loss = 0.0
-        T_count=0
-        V_count=0
-        V_k_count=0
-        train_acc = 0.0
+        #train_loss = 0.0
+
+        #train_acc = 0.0
         #valid_loss = 0.0
-        valid_acc = 0.0
-        print("This epoch is {} iterations".format(len(train_data)))
+        #valid_acc = 0.0
+        
 
 
         ttime=time.time()
@@ -206,9 +257,12 @@ def train_and_valid(model, optimizer, epochs=25):
                 ttime=time.time()
 
         
-        valid_loss = 0.0
+            valid_loss = 0.0
         with torch.no_grad():
             model.eval()
+            T_count=0
+            V_count=0
+            V_k_count=0
             for j, (inputs, labels) in enumerate(val_data):
                 inputs = inputs.cuda()
                 labels = labels.cuda()
@@ -236,18 +290,18 @@ def train_and_valid(model, optimizer, epochs=25):
                 if(j%100==99):
                     print("Val Loss for {} : {:.5f}\t Top-1 Acc {}%\t Top-3 Acc {}%".format(j,loss,acc*100,acc_topk*100))
                     #writer.add_scalar("LOSS",loss,global_step=i+epoch*len(train_data))
-        loss_of_val=valid_loss*world_size/len(val_dataset)
-        top1_of_val=V_count*world_size/len(val_dataset)
-        top3_of_val=V_k_count*world_size/len(val_dataset)
-        print("VAL:{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}".format(
-                    epoch,top1_of_val*100,top3_of_val*100,loss_of_val
-                ))
+            loss_of_val=valid_loss*world_size/len(val_dataset)
+            top1_of_val=V_count*world_size/len(val_dataset)
+            top3_of_val=V_k_count*world_size/len(val_dataset)
+            print("VAL:{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}".format(
+                        epoch,top1_of_val*100,top3_of_val*100,loss_of_val
+                    ))
 
 
-        # 保存记录
-        with open("output.txt",'a') as f:
-            text="Epoch{}\tTop1:\t{}\tTop3:\t{}\n".format(epoch,top1_of_val*100,top3_of_val*100 )
-            f.write(text)
+            # 保存记录
+            with open("output.txt",'a') as f:
+                text="Epoch{}\tTop1:\t{}\tTop3:\t{}\n".format(epoch,top1_of_val*100,top3_of_val*100 )
+                f.write(text)
 
         #print("Best Accuracy for validation : {:.4f} at epoch {:03d}".format(best_acc, best_epoch))
         if not os.path.exists("resnetmodels"):
