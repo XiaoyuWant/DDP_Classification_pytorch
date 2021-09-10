@@ -140,7 +140,7 @@ def WarmUp(model,optimizer,target_lr,iter):
             loss.backward()
             reduce_loss(loss, global_rank, world_size)
             optimizer.step()
-    retrun 0
+    return 0
 
 
 
