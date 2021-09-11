@@ -20,6 +20,10 @@ from tqdm import tqdm
 import timm
 import random
 from PIL import Image
+# test
+# !pip install from prefetch_generator import BackgroundGenerator
+from prefetch_generator import BackgroundGenerator
+from torch.cuda.amp import autocast as autocast
 
 
 #CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 torch_ddp.py
@@ -30,11 +34,12 @@ parser.add_argument('--world_size', type=int, help="num of processes")
 #print(parser.local_rank)
 args = parser.parse_args()
 world_size=args.world_size
-dist.init_process_group(backend='nccl', init_method='env://')
+# dist.init_process_group(backend='nccl', init_method='env://')
+dist.init_process_group(backend='nccl',init_method='tcp://127.0.0.1:3333',rank=args.local_rank,world_size=args.world_size)
 torch.cuda.set_device(args.local_rank)
 global_rank = dist.get_rank()
 print(global_rank)
-
+torch.backends.cudnn.benchmark
 # from tensorboardX import SummaryWriter
 # writer = SummaryWriter('food/runs/exp2')
 def set_seed(seed):
@@ -56,9 +61,9 @@ image_transforms = {
     'train':transforms.Compose([
 	    #transforms.ToPILImage(),
         transforms.RandomResizedCrop(size=256, scale=(0.8, 1.0)),
-        transforms.RandomRotation(degrees=15),
-        transforms.RandomHorizontalFlip(),
-        transforms.CenterCrop(size=224),
+        #transforms.RandomRotation(degrees=15),
+        #transforms.RandomHorizontalFlip(),
+        #transforms.CenterCrop(size=224),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406],
                             [0.229, 0.224, 0.225])
@@ -77,7 +82,7 @@ image_transforms = {
 # THIS IS DATASET PATH AND PARAMS
 trainDatapath='/root/commonfile/foodH/train'
 valDatapath='/root/commonfile/foodH/test'
-BATCH_SIZE = 16*4
+BATCH_SIZE = 8*4
 NUM_CLASS = 2173
 LR = 0.001
 
@@ -91,11 +96,21 @@ LR = 0.001
 # 单独的 train test
 
 # For Large Dataset Need Write a new Dataloader because torchvision.ImageFolder has a problem
+
+class DataLoaderX(DataLoader):
+    def __iter__(self):
+        return BackgroundGenerator(super().__iter__())
+
+
+loader = transforms.Compose([
+transforms.ToTensor()])
+
 class ImageDataset(torch.utils.data.Dataset):
     def __init__(self, folder, klass, transform):
         self._data = folder
         self.klass = klass
         self.transform=transform
+        self.imgs=glob.glob(self._data+'/*')
         #self.extension = extension
         # Only calculate once how many files are in this folder
         # Could be passed as argument if you precalculate it somehow
@@ -108,34 +123,35 @@ class ImageDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         # images always follow [0, n-1], so you access them directly
-        re=glob.glob(self._data+'/*')
-        img=Image.open(re[index])
-        img=transform(img)
-        return img,self.kclass
+        img=Image.open(self.imgs[index])
+        img=loader(img).unsqueeze(0).cuda()
         
+        img=self.transform(img)
+        return img,self.klass
+
 root="/root/commonfile/foodH/"
 
-folders=glob.glob(root+"train/*")
-index=0
-train_dataset=[]
-for folder in folders:
-    train_dataset.append(ImageDataset(folder,index,image_transforms['train']))
-    index+=1
-train_dataset=ConcatDataset(train_dataset)
+# folders=glob.glob(root+"train/*")
+# index=0
+# train_dataset=[]
+# for folder in folders:
+#     train_dataset.append(ImageDataset(folder,index,image_transforms['train']))
+#     index+=1
+# train_dataset=ConcatDataset(train_dataset)
 
-folders=glob.glob(root+"test/*")
-index=0
-val_dataset=[]
-for folder in folders:
-    val_dataset.append(ImageDataset(folder,index,image_transforms['val']))
-    index+=1
-val_dataset=ConcatDataset(val_dataset)
-
-
+# folders=glob.glob(root+"test/*")
+# index=0
+# val_dataset=[]
+# for folder in folders:
+#     val_dataset.append(ImageDataset(folder,index,image_transforms['val']))
+#     index+=1
+# val_dataset=ConcatDataset(val_dataset)
 
 
-# train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
-# val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
+
+
+train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
+val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
 
 
 trainsampler = DistributedSampler(train_dataset,rank=args.local_rank)
@@ -143,8 +159,8 @@ valsampler = DistributedSampler(val_dataset,rank=args.local_rank)
 
 # train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
 # val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
-train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=4,pin_memory=True)
-val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=4,pin_memory=True)
+train_data = DataLoaderX(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
+val_data = DataLoaderX(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
 #print("train size:",train_size,"; val size:",val_size)
 
 #resnet50 = models.resnet50(pretrained=True)
@@ -207,31 +223,21 @@ def train_and_valid(model, optimizer, epochs=25):
     
     for epoch in range(epochs):
         #epoch_start = time.time()
-        print("Epoch: {}/{}".format(epoch+1, epochs))
-        print("This epoch is {} iterations".format(len(train_data)))
+        if(args.local_rank==0):
+            print("Epoch: {}/{}".format(epoch+1, epochs))
+            print("This epoch is {} iterations".format(len(train_data)))
         model.train()
  
-        #train_loss = 0.0
-
-        #train_acc = 0.0
-        #valid_loss = 0.0
-        #valid_acc = 0.0
-        
-
-
         ttime=time.time()
         for i, (inputs, labels) in enumerate(train_data):
-            
-
-            inputs = inputs.cuda()
-            labels = labels.cuda()
+            inputs = inputs.cuda(non_blocking=True)
+            labels = labels.cuda(non_blocking=True)
             #因为这里梯度是累加的，所以每次记得清零
             optimizer.zero_grad()
-            outputs = model(inputs)
-            # batch*channel*class*prob ???
-            
-
-            loss = loss_function(outputs, labels)
+            with autocast():
+                outputs = model(inputs)
+                # batch*channel*class*prob ???
+                loss = loss_function(outputs, labels)
             
             loss.backward()
             reduce_loss(loss, global_rank, world_size)
