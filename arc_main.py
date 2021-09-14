@@ -7,6 +7,8 @@ from torch.utils.data import ConcatDataset
 from torch import distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
+from torch.nn import Parameter
+import torch.nn.functional as F
 # System
 import os
 import time
@@ -14,6 +16,7 @@ import warnings
 import glob
 warnings.filterwarnings("ignore")
 # Tools
+import math
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -83,9 +86,9 @@ image_transforms = {
 # THIS IS DATASET PATH AND PARAMS
 trainDatapath='/root/commonfile/foodH/train'
 valDatapath='/root/commonfile/foodH/test'
-BATCH_SIZE = 16*4
+BATCH_SIZE = 8*4
 NUM_CLASS = 2173
-LR = 0.001
+LR = 0.01
 NUM_EPOCH = 100
 
 
@@ -104,52 +107,77 @@ class DataLoaderX(DataLoader):
         return BackgroundGenerator(super().__iter__())
 
 
-loader = transforms.Compose([
-transforms.ToTensor()])
-
-class ImageDataset(torch.utils.data.Dataset):
-    def __init__(self, folder, klass, transform):
-        self._data = folder
-        self.klass = klass
-        self.transform=transform
-        self.imgs=glob.glob(self._data+'/*')
-        #self.extension = extension
-        # Only calculate once how many files are in this folder
-        # Could be passed as argument if you precalculate it somehow
-        # e.g. ls | wc -l on Linux
-        self._length = sum(1 for entry in os.listdir(self._data))
-
-    def __len__(self):
-        # No need to recalculate this value every time
-        return self._length
-
-    def __getitem__(self, index):
-        # images always follow [0, n-1], so you access them directly
-        img=Image.open(self.imgs[index])
-        img=loader(img).unsqueeze(0).cuda()
-        
-        img=self.transform(img)
-        return img,self.klass
 
 root="/root/commonfile/foodH/"
 
-# folders=glob.glob(root+"train/*")
-# index=0
-# train_dataset=[]
-# for folder in folders:
-#     train_dataset.append(ImageDataset(folder,index,image_transforms['train']))
-#     index+=1
-# train_dataset=ConcatDataset(train_dataset)
+class NewFC(nn.Module):
+    # 返回 features 和 out 的FC层，便于计算损失
+    def __init__(self,in_features,out_features):
+        super(NewFC,self).__init__()
+        #self.fc=nn.Linear(in_features=in_features,out_features=out_features)
+    def forward(self,features):
+        #out=self.fc(features)
+        features=features
+        return features
 
-# folders=glob.glob(root+"test/*")
-# index=0
-# val_dataset=[]
-# for folder in folders:
-#     val_dataset.append(ImageDataset(folder,index,image_transforms['val']))
-#     index+=1
-# val_dataset=ConcatDataset(val_dataset)
+class ArcFaceNet(nn.Module):
+    def __init__(self, cls_num=10, feature_dim=2):
+        super(ArcFaceNet, self).__init__()
+        self.w = nn.Parameter(torch.randn(feature_dim, cls_num))
 
+    def forward(self, features, m=1, s=10):
+        # 特征与权重 归一化
+        _features = nn.functional.normalize(features, dim=1)
+        _w = nn.functional.normalize(self.w, dim=0)
+        # 特征向量与参数向量的夹角theta，分子numerator，分母denominator
+        theta = torch.acos(torch.matmul(_features, _w) / 10)  # /10防止下溢
+        numerator = torch.exp(s * torch.cos(theta + m))
+        denominator = torch.sum(torch.exp(s * torch.cos(theta)), dim=1, keepdim=True) - torch.exp(
+            s * torch.cos(theta)) + numerator
+        return torch.log(torch.div(numerator, denominator))
+class ArcMarginProduct(nn.Module):
+    r"""Implement of large margin arc distance: :
+        Args:
+            in_features: size of each input sample
+            out_features: size of each output sample
+            s: norm of input feature
+            m: margin
+            cos(theta + m)
+        """
+    def __init__(self, in_features, out_features, s=30.0, m=0.50, easy_margin=False):
+        super(ArcMarginProduct, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.s = s
+        self.m = m
+        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
 
+        self.easy_margin = easy_margin
+        self.cos_m = math.cos(m)
+        self.sin_m = math.sin(m)
+        self.th = math.cos(math.pi - m)
+        self.mm = math.sin(math.pi - m) * m
+
+    def forward(self, input, label):
+        # --------------------------- cos(theta) & phi(theta) ---------------------------
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+        sine = torch.sqrt((1.0 - torch.pow(cosine, 2)).clamp(0, 1))
+        phi = cosine * self.cos_m - sine * self.sin_m
+        if self.easy_margin:
+            phi = torch.where(cosine > 0, phi, cosine)
+        else:
+            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+        # --------------------------- convert label to one-hot ---------------------------
+        # one_hot = torch.zeros(cosine.size(), requires_grad=True, device='cuda')
+        one_hot = torch.zeros(cosine.size(), device='cuda')
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+        # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
+        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)  # you can use torch.where if your torch.__version__ is 0.4
+        output *= self.s
+        # print(output)
+
+        return output
 
 
 train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
@@ -168,15 +196,24 @@ val_data = DataLoaderX(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_
 #resnet50 = models.resnet50(pretrained=True)
 #resnet50  = timm.create_model('tresnet_m', pretrained=True,num_classes=85)
 resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
+resnet50.head.fc=NewFC(2048,NUM_CLASS)
+
+ARC=ArcMarginProduct(2048,NUM_CLASS, s=30, m=0.5, easy_margin=False)
+
 
 # Distributed to device
 resnet50.cuda()
 resnet50 = torch.nn.SyncBatchNorm.convert_sync_batchnorm(resnet50)
 resnet50 = DDP(resnet50, device_ids=[args.local_rank], output_device=args.local_rank)
-
+ARC.cuda()
+ARC=torch.nn.SyncBatchNorm.convert_sync_batchnorm(ARC)
+ARC=DDP(ARC, device_ids=[args.local_rank], output_device=args.local_rank)
 
 loss_function = nn.CrossEntropyLoss().cuda()
-optimizer = optim.SGD(resnet50.parameters(),lr=LR,momentum=0.9)
+# loss_function = nn.NLLLoss().cuda()
+
+optimizer = torch.optim.SGD([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
+                                    lr=LR, weight_decay=5e-4,momentum=0.9)
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.1)
 
 def accuracy(output, target, topk=(1, )):
@@ -241,6 +278,7 @@ def train_and_valid(model, optimizer, epochs=25):
             print("Epoch: {}/{}".format(epoch+1, epochs))
             print("This epoch is {} iterations".format(len(train_data)))
         model.train()
+        ARC.train()
  
         ttime=time.time()
         for i, (inputs, labels) in enumerate(train_data):
@@ -248,10 +286,16 @@ def train_and_valid(model, optimizer, epochs=25):
             labels = labels.cuda(non_blocking=True)
             #因为这里梯度是累加的，所以每次记得清零
             optimizer.zero_grad()
-            with autocast():
-                outputs = model(inputs)
-                # batch*channel*class*prob ???
-                loss = loss_function(outputs, labels)
+            
+            features= model(inputs)
+            #print(features.shape)
+            # batch*channel*class*prob ???
+            #ce_loss = loss_function(outputs, labels)
+            arc_outputs = ARC(features,labels)
+            # print(outputs.shape)
+            # print(arc_outputs.shape)
+            arc_loss=loss_function(arc_outputs,labels)
+            loss=arc_loss
             torch.distributed.barrier()
             loss.backward()
             # TODO  what does dist.reduce do for?
@@ -262,19 +306,21 @@ def train_and_valid(model, optimizer, epochs=25):
             # New Cal of ACC
             record_gap=20
             if(i%record_gap==record_gap-1 and args.local_rank==0):
-                ret, predictions = torch.max(outputs, 1)
+                print(arc_outputs.shape)
+                print(torch.sum(arc_outputs,dim=0))
+                ret, predictions = torch.max(arc_outputs, 1)
                 correct_counts = torch.eq(predictions, labels).sum().float().item()
                 acc1 = correct_counts/inputs.size(0)
                 maxk = max((1,3))
-                ret,predictions = outputs.topk(maxk,1,True,True)
+                ret,predictions = arc_outputs.topk(maxk,1,True,True)
                 predictions = predictions.t()
                 correct_counts = predictions.eq(labels.view(1,-1).expand_as(predictions)).sum().item()
                 acc_topk = correct_counts/inputs.size(0)
                 etaTime=(time.time()-ttime)*(len(train_data)-i)/record_gap # not accurate
                 loss=loss.mean()
                 ETAtime=(1-(i/len(train_data)))*(time.time()-ttime)*(len(train_dataset)/BATCH_SIZE)/record_gap/60
-                info="{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}\ttime:{:.2f}S\tETA:{:.2f}Min".format(
-                    epoch,i,acc1*100,acc_topk*100,loss,time.time()-ttime,ETAtime
+                info="{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}\tarc:{:.4f}\ttime:{:.2f}S\tETA:{:.2f}Min".format(
+                    epoch,i,acc1*100,acc_topk*100,loss,arc_loss, time.time()-ttime,ETAtime
                 )
                 print('\r',info,end=' ',flush=True)
                 ttime=time.time()
@@ -283,6 +329,7 @@ def train_and_valid(model, optimizer, epochs=25):
             valid_loss = 0.0
         with torch.no_grad():
             model.eval()
+            ARC.eval()
             T_count=0
             V_count=0
             V_k_count=0
@@ -290,20 +337,23 @@ def train_and_valid(model, optimizer, epochs=25):
                 inputs = inputs.cuda()
                 labels = labels.cuda()
 
-                outputs=model(inputs)
-                loss = loss_function(outputs, labels)
+                features=model(inputs)
+                #ce_loss = loss_function(outputs, labels)
+                arc_outputs = ARC(features)
+                arc_loss=loss_function(arc_outputs,labels)
+                loss=arc_loss
                 loss=loss.mean()
 
                 valid_loss += loss.item() * inputs.size(0)
                 # TOP1
-                ret, predictions = torch.max(outputs.data, 1)
+                ret, predictions = torch.max(arc_outputs.data, 1)
                 correct_counts = torch.eq(predictions, labels).sum().float().item()
                 V_count += correct_counts
                 acc = correct_counts/inputs.size(0)
 
                 # TOP5
                 maxk = max((1,3))
-                ret,predictions = outputs.topk(maxk,1,True,True)
+                ret,predictions = arc_outputs.topk(maxk,1,True,True)
                 predictions = predictions.t()
                 correct_counts = predictions.eq(labels.view(1,-1).expand_as(predictions)).sum().item()
                 V_k_count += correct_counts
