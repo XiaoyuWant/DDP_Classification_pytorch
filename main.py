@@ -23,7 +23,7 @@ from PIL import Image
 # test
 # !pip install from prefetch_generator import BackgroundGenerator
 from prefetch_generator import BackgroundGenerator
-from torch.cuda.amp import autocast as autocast
+# from torch.cuda.amp import autocast as autocast
 
 
 #CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 torch_ddp.py
