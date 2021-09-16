@@ -25,8 +25,8 @@ import random
 from PIL import Image
 # test
 # !pip install from prefetch_generator import BackgroundGenerator
-from prefetch_generator import BackgroundGenerator
-from torch.cuda.amp import autocast as autocast
+# from prefetch_generator import BackgroundGenerator
+# from torch.cuda.amp import autocast as autocast
 
 
 #CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 torch_ddp.py
@@ -102,9 +102,9 @@ NUM_EPOCH = 100
 
 # For Large Dataset Need Write a new Dataloader because torchvision.ImageFolder has a problem
 
-class DataLoaderX(DataLoader):
-    def __iter__(self):
-        return BackgroundGenerator(super().__iter__())
+# class DataLoaderX(DataLoader):
+#     def __iter__(self):
+#         return BackgroundGenerator(super().__iter__())
 
 
 
@@ -192,8 +192,8 @@ valsampler = DistributedSampler(val_dataset,rank=args.local_rank)
 
 # train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
 # val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
-train_data = DataLoaderX(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
-val_data = DataLoaderX(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
+train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
+val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
 #print("Train size:",train_size,"; val size:",val_size)
 
 #resnet50 = models.resnet50(pretrained=True)
@@ -332,7 +332,6 @@ def train_and_valid(model, optimizer, epochs=25):
                 labels = labels.cuda()
 
                 features=model(inputs)
-                #ce_loss = loss_function(outputs, labels)
                 arc_outputs = ARC(features)
                 arc_loss=loss_function(arc_outputs,labels)
                 loss=arc_loss
@@ -356,11 +355,10 @@ def train_and_valid(model, optimizer, epochs=25):
                 correct_counts = predictions.eq(labels.view(1,-1).expand_as(predictions)).sum().item()
                 V_k_count += correct_counts
                 acc_topk = correct_counts/inputs.size(0)
-                #print("Val Loss for {} : {:.5f}\t Top-1 Acc {}%\t Top-3 Acc {}%".format(i,loss,acc*100,acc_topk*100))
+
                 #记录loss
                 if(j%100==99):
                     print("Val Loss for {} : {:.5f}\t Top-1 Acc {}%\t Top-3 Acc {}%".format(j,loss,acc*100,acc_topk*100))
-                    #writer.add_scalar("LOSS",loss,global_step=i+epoch*len(train_data))
             loss_of_val=valid_loss*world_size/len(val_dataset)
             top1_of_val=V_count*world_size/len(val_dataset)
             top3_of_val=V_k_count*world_size/len(val_dataset)
@@ -374,7 +372,7 @@ def train_and_valid(model, optimizer, epochs=25):
                 text="Epoch{}\tTop1:\t{}\tTop3:\t{}\n".format(epoch,top1_of_val*100,top3_of_val*100 )
                 f.write(text)
 
-        #print("Best Accuracy for validation : {:.4f} at epoch {:03d}".format(best_acc, best_epoch))
+
         if not os.path.exists("resnetmodels"):
             os.mkdir("resnetmodels")
         torch.save(model, 'resnetmodels/'+"food"+str(epoch+1)+'.pt')
