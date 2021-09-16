@@ -39,6 +39,7 @@ class ArcFaceNet(nn.Module):
         denominator = torch.sum(torch.exp(s * torch.cos(theta)), dim=1, keepdim=True) - torch.exp(
             s * torch.cos(theta)) + numerator
         return torch.log(torch.div(numerator, denominator))
+print(model)
 model.head.fc=NewFC(2048,1000)
 CELoss= nn.CrossEntropyLoss()
 ARCLoss=ArcFaceNet(1000,2048)

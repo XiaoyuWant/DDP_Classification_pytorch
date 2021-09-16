@@ -86,9 +86,9 @@ image_transforms = {
 # THIS IS DATASET PATH AND PARAMS
 trainDatapath='/root/commonfile/foodH/train'
 valDatapath='/root/commonfile/foodH/test'
-BATCH_SIZE = 8*4
+BATCH_SIZE = 4*4
 NUM_CLASS = 2173
-LR = 0.01
+LR = 0.001
 NUM_EPOCH = 100
 
 
@@ -114,10 +114,9 @@ class NewFC(nn.Module):
     # 返回 features 和 out 的FC层，便于计算损失
     def __init__(self,in_features,out_features):
         super(NewFC,self).__init__()
-        #self.fc=nn.Linear(in_features=in_features,out_features=out_features)
+        self.fc=nn.Linear(in_features=in_features,out_features=out_features)
     def forward(self,features):
-        #out=self.fc(features)
-        features=features
+        features=self.fc(features)
         return features
 
 class ArcFaceNet(nn.Module):
@@ -158,6 +157,9 @@ class ArcMarginProduct(nn.Module):
         self.sin_m = math.sin(m)
         self.th = math.cos(math.pi - m)
         self.mm = math.sin(math.pi - m) * m
+        # 加上一个softmax
+        # arc_outputs 是未经softmax层的
+        # self.softmax =nn.Softmax(dim=0)
 
     def forward(self, input, label):
         # --------------------------- cos(theta) & phi(theta) ---------------------------
@@ -176,7 +178,8 @@ class ArcMarginProduct(nn.Module):
         output = (one_hot * phi) + ((1.0 - one_hot) * cosine)  # you can use torch.where if your torch.__version__ is 0.4
         output *= self.s
         # print(output)
-
+        #加上一个softmax
+        # output = self.softmax(output)
         return output
 
 
@@ -196,9 +199,8 @@ val_data = DataLoaderX(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_
 #resnet50 = models.resnet50(pretrained=True)
 #resnet50  = timm.create_model('tresnet_m', pretrained=True,num_classes=85)
 resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
-resnet50.head.fc=NewFC(2048,NUM_CLASS)
-
-ARC=ArcMarginProduct(2048,NUM_CLASS, s=30, m=0.5, easy_margin=False)
+resnet50.head.fc=NewFC(2048,256)
+ARC=ArcMarginProduct(256,NUM_CLASS, s=30, m=0.5, easy_margin=False)
 
 
 # Distributed to device
@@ -208,10 +210,10 @@ resnet50 = DDP(resnet50, device_ids=[args.local_rank], output_device=args.local_
 ARC.cuda()
 ARC=torch.nn.SyncBatchNorm.convert_sync_batchnorm(ARC)
 ARC=DDP(ARC, device_ids=[args.local_rank], output_device=args.local_rank)
-
+softmax=nn.LogSoftmax(dim=0).cuda()
 loss_function = nn.CrossEntropyLoss().cuda()
-# loss_function = nn.NLLLoss().cuda()
-
+# CrossEntropy = LogSoftmax + NLLLoss
+#loss_function = nn.NLLLoss().cuda()
 optimizer = torch.optim.SGD([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
                                     lr=LR, weight_decay=5e-4,momentum=0.9)
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.1)
@@ -286,28 +288,20 @@ def train_and_valid(model, optimizer, epochs=25):
             labels = labels.cuda(non_blocking=True)
             #因为这里梯度是累加的，所以每次记得清零
             optimizer.zero_grad()
-            
             features= model(inputs)
-            #print(features.shape)
-            # batch*channel*class*prob ???
-            #ce_loss = loss_function(outputs, labels)
             arc_outputs = ARC(features,labels)
-            # print(outputs.shape)
-            # print(arc_outputs.shape)
             arc_loss=loss_function(arc_outputs,labels)
             loss=arc_loss
             torch.distributed.barrier()
             loss.backward()
-            # TODO  what does dist.reduce do for?
-            #reduce_loss(loss, global_rank, world_size)
             optimizer.step()
             
 
             # New Cal of ACC
             record_gap=20
             if(i%record_gap==record_gap-1 and args.local_rank==0):
-                print(arc_outputs.shape)
-                print(torch.sum(arc_outputs,dim=0))
+                #print(arc_outputs)
+                arc_outputs=softmax(arc_outputs)
                 ret, predictions = torch.max(arc_outputs, 1)
                 correct_counts = torch.eq(predictions, labels).sum().float().item()
                 acc1 = correct_counts/inputs.size(0)
@@ -343,6 +337,10 @@ def train_and_valid(model, optimizer, epochs=25):
                 arc_loss=loss_function(arc_outputs,labels)
                 loss=arc_loss
                 loss=loss.mean()
+
+
+                arc_outputs=softmax(arc_outputs)
+
 
                 valid_loss += loss.item() * inputs.size(0)
                 # TOP1
