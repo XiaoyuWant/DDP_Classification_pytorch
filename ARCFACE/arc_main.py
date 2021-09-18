@@ -1,3 +1,4 @@
+from urllib import parse
 import torch
 from torchvision import datasets, models, transforms
 import torch.nn as nn
@@ -33,6 +34,7 @@ from PIL import Image
 parser = argparse.ArgumentParser()
 parser.add_argument('--local_rank', type=int, help="local gpu id")
 parser.add_argument('--world_size', type=int, help="num of processes")
+parser.add_argument('--batchsize',type=int,defalut=32)
 
 #print(parser.local_rank)
 args = parser.parse_args()
@@ -86,7 +88,7 @@ image_transforms = {
 # THIS IS DATASET PATH AND PARAMS
 trainDatapath='/root/commonfile/foodH/train'
 valDatapath='/root/commonfile/foodH/test'
-BATCH_SIZE = 4*4
+BATCH_SIZE = args.batchsize
 NUM_CLASS = 2173
 LR = 0.001
 NUM_EPOCH = 100

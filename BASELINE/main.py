@@ -32,6 +32,7 @@ parser.add_argument('--local_rank', type=int, help="local gpu id")
 parser.add_argument('--world_size', type=int, help="num of processes")
 parser.add_argument('--folder',type= str,default='/root/commonfile/foodH/', help="num of processes")
 parser.add_argument('--model',type=str,default='resnet50')
+parser.add_argument('--batchsize',type=int,defalut=32)
 #print(parser.local_rank)
 args = parser.parse_args()
 world_size=args.world_size
@@ -87,7 +88,7 @@ trainDatapath=Folder+'train'
 valDatapath=Folder+'test'
 # trainDatapath='/root/commonfile/foodH/train'
 # valDatapath='/root/commonfile/foodH/test'
-BATCH_SIZE = 16*4
+BATCH_SIZE = args.batchsize
 NUM_CLASS = 2173
 LR = 0.001
 NUM_EPOCH = 100
