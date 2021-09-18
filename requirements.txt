@@ -1,0 +1,4 @@
+timm
+tqdm
+typing_extensions
+pip install git+https://github.com/mapillary/inplace_abn.git@v1.0.12
