@@ -88,8 +88,7 @@ image_transforms = {
 # THIS IS DATASET PATH AND PARAMS
 trainDatapath='/root/commonfile/foodH/train'
 valDatapath='/root/commonfile/foodH/test'
-
-BATCH_SIZE = 4*2
+BATCH_SIZE = args.batchsize
 NUM_CLASS = 2173
 LR = 0.001
 NUM_EPOCH = 100
