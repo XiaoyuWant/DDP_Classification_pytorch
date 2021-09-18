@@ -34,7 +34,7 @@ from PIL import Image
 parser = argparse.ArgumentParser()
 parser.add_argument('--local_rank', type=int, help="local gpu id")
 parser.add_argument('--world_size', type=int, help="num of processes")
-parser.add_argument('--batchsize',type=int,defalut=32)
+parser.add_argument('--batchsize',type=int,default=32)
 
 #print(parser.local_rank)
 args = parser.parse_args()
