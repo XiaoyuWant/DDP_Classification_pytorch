@@ -31,8 +31,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--local_rank', type=int, help="local gpu id")
 parser.add_argument('--world_size', type=int, help="num of processes")
 parser.add_argument('--folder',type= str,default='/root/commonfile/foodH/', help="num of processes")
-parser.add_argument('--model',type=str,default='resnet50')
-parser.add_argument('--batchsize',type=int,defalut=32)
+parser.add_argument('--model',type=str,default='tresnet')
+parser.add_argument('--batchsize',type=int,default=16)
 #print(parser.local_rank)
 args = parser.parse_args()
 world_size=args.world_size
@@ -112,30 +112,55 @@ NUM_EPOCH = 100
 loader = transforms.Compose([
 transforms.ToTensor()])
 
-class ImageDataset(torch.utils.data.Dataset):
-    def __init__(self, folder, klass, transform):
-        self._data = folder
-        self.klass = klass
-        self.transform=transform
-        self.imgs=glob.glob(self._data+'/*')
-        #self.extension = extension
-        # Only calculate once how many files are in this folder
-        # Could be passed as argument if you precalculate it somehow
-        # e.g. ls | wc -l on Linux
-        self._length = sum(1 for entry in os.listdir(self._data))
+# class ImageDataset(torch.utils.data.Dataset):
+#     def __init__(self, folder, klass, transform):
+#         self._data = folder
+#         self.klass = klass
+#         self.transform=transform
+#         self.imgs=glob.glob(self._data+'/*')
+#         #self.extension = extension
+#         # Only calculate once how many files are in this folder
+#         # Could be passed as argument if you precalculate it somehow
+#         # e.g. ls | wc -l on Linux
+#         self._length = sum(1 for entry in os.listdir(self._data))
 
-    def __len__(self):
-        # No need to recalculate this value every time
-        return self._length
+#     def __len__(self):
+#         # No need to recalculate this value every time
+#         return self._length
 
-    def __getitem__(self, index):
-        # images always follow [0, n-1], so you access them directly
-        img=Image.open(self.imgs[index])
-        img=loader(img).unsqueeze(0).cuda()
+#     def __getitem__(self, index):
+#         # images always follow [0, n-1], so you access them directly
+#         img=Image.open(self.imgs[index])
+#         img=loader(img).unsqueeze(0).cuda()
         
+#         img=self.transform(img)
+#         return img,self.klass
+class ImageFolderMy(torch.utils.data.Dataset):
+    def __init__(self,root,transform):
+        classes=glob.glob(root+"/*")
+        #print(classes)
+        self.transform=transform
+        self.imgs=[]
+        self.labels=[]
+        for i in range(len(classes)):
+            one=classes[i]
+            imgs=glob.glob(one+'/*.jpg')
+            if(len(imgs)>100):
+                imgs=imgs[:100]
+            #print("img len:",len(imgs))
+            labels=[i for _ in range(len(imgs))]
+            #print("img len:",len(labels))
+            self.imgs+=imgs
+            self.labels+=labels
+    def __getitem__(self,index):
+        img=self.imgs[index]
+        label=self.labels[index]
+        img=Image.open(img).convert('RGB')
         img=self.transform(img)
-        return img,self.klass
-
+        return img,label
+    def __len__(self):
+        return len(self.labels)
+        
 # root="/root/commonfile/foodH/"
 
 # folders=glob.glob(root+"train/*")
@@ -156,9 +181,10 @@ class ImageDataset(torch.utils.data.Dataset):
 
 
 
-
-train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
-val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
+train_dataset=ImageFolderMy(root=trainDatapath,transform=image_transforms['train'])
+val_dataset=ImageFolderMy(root=valDatapath,transform=image_transforms['val'])
+# train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
+# val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
 
 
 trainsampler = DistributedSampler(train_dataset,rank=args.local_rank)
@@ -166,9 +192,9 @@ valsampler = DistributedSampler(val_dataset,rank=args.local_rank)
 
 # train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
 # val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
-train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
-val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
-#print("Train size:",train_size,"; val size:",val_size)
+train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=4,pin_memory=True)
+val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=4,pin_memory=True)
+print("Train size:",len(train_dataset),"; val size:",len(val_dataset))
 if(args.model=='resnet50'):
     resnet50 = models.resnet50(pretrained=True)
     fc_inputs = resnet50.fc.in_features
@@ -289,7 +315,8 @@ def train_and_valid(model, optimizer, epochs=25):
                 info="{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}\ttime:{:.2f}S\tETA:{:.2f}Min".format(
                     epoch,i,acc1*100,acc_topk*100,loss,time.time()-ttime,ETAtime
                 )
-                print('\r',info,end=' ',flush=True)
+                #print('\r',info,end=' ',flush=True)
+                print(info)
                 ttime=time.time()
 
         

@@ -11,46 +11,46 @@ import time
 import os
 import glob
 from torch.utils.data import ConcatDataset
-model=timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=10)
-print(model.head.fc)
+# model=timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=10)
+# print(model.head.fc)
 #Linear(in_features=2048, out_features=10, bias=True)
 # ArcFaceNet-> input:features   out:loss
-class NewFC(nn.Module):
-    # 返回 features 和 out 的FC层，便于计算损失
-    def __init__(self,in_features,out_features):
-        super(NewFC,self).__init__()
-        self.fc=nn.Linear(in_features=in_features,out_features=out_features)
-    def forward(self,features):
-        out=self.fc(features)
-        return features,out
+# class NewFC(nn.Module):
+#     # 返回 features 和 out 的FC层，便于计算损失
+#     def __init__(self,in_features,out_features):
+#         super(NewFC,self).__init__()
+#         self.fc=nn.Linear(in_features=in_features,out_features=out_features)
+#     def forward(self,features):
+#         out=self.fc(features)
+#         return features,out
 
-class ArcFaceNet(nn.Module):
-    def __init__(self, cls_num=10, feature_dim=2):
-        super(ArcFaceNet, self).__init__()
-        self.w = nn.Parameter(torch.randn(feature_dim, cls_num))
+# class ArcFaceNet(nn.Module):
+#     def __init__(self, cls_num=10, feature_dim=2):
+#         super(ArcFaceNet, self).__init__()
+#         self.w = nn.Parameter(torch.randn(feature_dim, cls_num))
 
-    def forward(self, features, m=1, s=10):
-        # 特征与权重 归一化
-        _features = nn.functional.normalize(features, dim=1)
-        _w = nn.functional.normalize(self.w, dim=0)
-        # 特征向量与参数向量的夹角theta，分子numerator，分母denominator
-        theta = torch.acos(torch.matmul(_features, _w) / 10)  # /10防止下溢
-        numerator = torch.exp(s * torch.cos(theta + m))
-        denominator = torch.sum(torch.exp(s * torch.cos(theta)), dim=1, keepdim=True) - torch.exp(
-            s * torch.cos(theta)) + numerator
-        return torch.log(torch.div(numerator, denominator))
-print(model)
-model.head.fc=NewFC(2048,1000)
-CELoss= nn.CrossEntropyLoss()
-ARCLoss=ArcFaceNet(1000,2048)
+#     def forward(self, features, m=1, s=10):
+#         # 特征与权重 归一化
+#         _features = nn.functional.normalize(features, dim=1)
+#         _w = nn.functional.normalize(self.w, dim=0)
+#         # 特征向量与参数向量的夹角theta，分子numerator，分母denominator
+#         theta = torch.acos(torch.matmul(_features, _w) / 10)  # /10防止下溢
+#         numerator = torch.exp(s * torch.cos(theta + m))
+#         denominator = torch.sum(torch.exp(s * torch.cos(theta)), dim=1, keepdim=True) - torch.exp(
+#             s * torch.cos(theta)) + numerator
+#         return torch.log(torch.div(numerator, denominator))
+# print(model)
+# model.head.fc=NewFC(2048,1000)
+# CELoss= nn.CrossEntropyLoss()
+# ARCLoss=ArcFaceNet(1000,2048)
 
-optimizer = torch.optim.SGD([{'params': model.parameters()}, {'params': metric_fc.parameters()}],
-                                    lr=opt.lr, weight_decay=opt.weight_decay)
-features,outputs=model(images)
-print(features.shape)
-print(outputs.shape)
-ce_loss=CELoss(outputs,labels)
-arc_loss=ARCLoss(features,labels)
+# optimizer = torch.optim.SGD([{'params': model.parameters()}, {'params': metric_fc.parameters()}],
+#                                     lr=opt.lr, weight_decay=opt.weight_decay)
+# features,outputs=model(images)
+# print(features.shape)
+# print(outputs.shape)
+# ce_loss=CELoss(outputs,labels)
+# arc_loss=ARCLoss(features,labels)
 
 
 
@@ -62,25 +62,25 @@ arc_loss=ARCLoss(features,labels)
 # for i in range(100):
 #     time.sleep(0.1)
 #     print('\r', i, end='', flush=True)
-# image_transforms = {
-#     'train':transforms.Compose([
-# 	    #transforms.ToPILImage(),
-#         transforms.RandomResizedCrop(size=256, scale=(0.8, 1.0)),
-#         transforms.RandomRotation(degrees=15),
-#         transforms.RandomHorizontalFlip(),
-#         transforms.CenterCrop(size=224),
-#         transforms.ToTensor(),
-#         transforms.Normalize([0.485, 0.456, 0.406],
-#                             [0.229, 0.224, 0.225])
-#     ]),
-#     'val':transforms.Compose([
-#         transforms.Resize(size=256),
-#         transforms.CenterCrop(size=224),
-#         transforms.ToTensor(),
-#         transforms.Normalize([0.485, 0.456, 0.406],
-#                             [0.229, 0.224, 0.225])
-#     ])
-# }
+image_transforms = {
+    'train':transforms.Compose([
+	    #transforms.ToPILImage(),
+        transforms.RandomResizedCrop(size=256, scale=(0.8, 1.0)),
+        transforms.RandomRotation(degrees=15),
+        transforms.RandomHorizontalFlip(),
+        transforms.CenterCrop(size=224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406],
+                            [0.229, 0.224, 0.225])
+    ]),
+    'val':transforms.Compose([
+        transforms.Resize(size=256),
+        transforms.CenterCrop(size=224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406],
+                            [0.229, 0.224, 0.225])
+    ])
+}
 
 # class ImageDataset(torch.utils.data.Dataset):
 #     def __init__(self, folder, klass, transform):
@@ -104,3 +104,32 @@ arc_loss=ARCLoss(features,labels)
 #         img=transform(img)
 #         return img,self.kclass
 
+class ImageFolder100(torch.utils.data.Dataset):
+    def __init__(self,root,transform):
+        classes=glob.glob(root+"/*")
+        #print(classes)
+        self.tranform=transform
+        self.imgs=[]
+        self.labels=[]
+        for i in range(len(classes)):
+            one=classes[i]
+            imgs=glob.glob(one+'/*.jpg')
+            if(len(imgs)>100):
+                imgs=imgs[:100]
+            #print("img len:",len(imgs))
+            labels=[i for _ in range(len(imgs))]
+            #print("img len:",len(labels))
+            self.imgs+=imgs
+            self.labels+=labels
+    def __getitem__(self,index):
+        img=self.imgs[index]
+        label=self.labels[index]
+        img=Image.Open(img)
+        img=self.transform(img)
+        return img,label
+    def __len__(self):
+        return len(self.labels)
+
+train_dataset=ImageFolder100(root='/root/commonfile/foodH/train',transform=image_transforms['train'])
+print(len(train_dataset))
+# model=timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=2173)

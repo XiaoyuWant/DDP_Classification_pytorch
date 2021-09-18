@@ -334,7 +334,7 @@ def train_and_valid(model, optimizer, epochs=25):
                 labels = labels.cuda()
 
                 features=model(inputs)
-                arc_outputs = ARC(features)
+                arc_outputs = ARC(features,labels)
                 arc_loss=loss_function(arc_outputs,labels)
                 loss=arc_loss
                 loss=loss.mean()
