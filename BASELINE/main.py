@@ -145,8 +145,8 @@ class ImageFolderMy(torch.utils.data.Dataset):
         for i in range(len(classes)):
             one=classes[i]
             imgs=glob.glob(one+'/*.jpg')
-            if(len(imgs)>100):
-                imgs=imgs[:100]
+            if(len(imgs)>300):
+                imgs=imgs[:300]
             #print("img len:",len(imgs))
             labels=[i for _ in range(len(imgs))]
             #print("img len:",len(labels))
