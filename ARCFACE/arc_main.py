@@ -34,7 +34,10 @@ from PIL import Image
 parser = argparse.ArgumentParser()
 parser.add_argument('--local_rank', type=int, help="local gpu id")
 parser.add_argument('--world_size', type=int, help="num of processes")
+parser.add_argument('--model',type=str,default='resnet50')
 parser.add_argument('--batchsize',type=int,default=32)
+parser.add_argument('--folder',type= str,default='/root/commonfile/foodH/', help="num of processes")
+parser.add_argument('--optimizer',type=str,default="Adam")
 
 #print(parser.local_rank)
 args = parser.parse_args()
@@ -86,12 +89,15 @@ image_transforms = {
 
 
 # THIS IS DATASET PATH AND PARAMS
-trainDatapath='/root/commonfile/foodH/train'
-valDatapath='/root/commonfile/foodH/test'
+Folder=args.folder
+trainDatapath=Folder+'train'
+valDatapath=Folder+'test'
 BATCH_SIZE = args.batchsize
 NUM_CLASS = 2173
-LR = 0.001
+LR = 0.01
 NUM_EPOCH = 100
+PIN_MEM=False
+OPTIM=args.optimizer
 
 
 # Load Dataset 
@@ -184,40 +190,81 @@ class ArcMarginProduct(nn.Module):
         # output = self.softmax(output)
         return output
 
+class ImageFolderMy(torch.utils.data.Dataset):
+    def __init__(self,root,transform):
+        classes=glob.glob(root+"/*")
+        #print(classes)
+        self.transform=transform
+        self.imgs=[]
+        self.labels=[]
+        for i in range(len(classes)):
+            one=classes[i]
+            imgs=glob.glob(one+'/*.jpg')
+            if(len(imgs)>200):
+                imgs=imgs[:200]
+            #print("img len:",len(imgs))
+            labels=[i for _ in range(len(imgs))]
+            #print("img len:",len(labels))
+            self.imgs+=imgs
+            self.labels+=labels
+    def __getitem__(self,index):
+        img=self.imgs[index]
+        label=self.labels[index]
+        img=Image.open(img).convert('RGB')
+        img=self.transform(img)
+        return img,label
+    def __len__(self):
+        return len(self.labels)
+        
+# train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
+# val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
 
-train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
-val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
-
+train_dataset=ImageFolderMy(root=trainDatapath,transform=image_transforms['train'])
+val_dataset=ImageFolderMy(root=valDatapath,transform=image_transforms['val'])
 
 trainsampler = DistributedSampler(train_dataset,rank=args.local_rank)
 valsampler = DistributedSampler(val_dataset,rank=args.local_rank)
 
 # train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
 # val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
-train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=2,pin_memory=True)
-val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=2,pin_memory=True)
-#print("Train size:",train_size,"; val size:",val_size)
+train_data = DataLoader(train_dataset,batch_size=BATCH_SIZE,sampler=trainsampler,num_workers=4,pin_memory=PIN_MEM)
+val_data = DataLoader(val_dataset,batch_size=BATCH_SIZE,sampler=valsampler,num_workers=4,pin_memory=PIN_MEM)
+print("Train size:",len(train_dataset),"; val size:",len(val_dataset))
 
-#resnet50 = models.resnet50(pretrained=True)
-#resnet50  = timm.create_model('tresnet_m', pretrained=True,num_classes=85)
-resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
-resnet50.head.fc=NewFC(2048,256)
+# resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
+# resnet50.head.fc=NewFC(2048,256)
+if(args.model=='resnet50'):
+    resnet50 = models.resnet50(pretrained=True)
+    fc_inputs = resnet50.fc.in_features
+    resnet50.fc = nn.Sequential(
+        nn.Linear(fc_inputs, 256),
+        # nn.ReLU(),
+        # nn.Linear(512, NUM_CLASS),
+        # nn.LogSoftmax(dim=1)
+    )
+# elif(args.model=='tresnet'):
+#     resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
 ARC=ArcMarginProduct(256,NUM_CLASS, s=30, m=0.5, easy_margin=False)
 
 
 # Distributed to device
 resnet50.cuda()
-resnet50 = torch.nn.SyncBatchNorm.convert_sync_batchnorm(resnet50)
+#resnet50 = torch.nn.SyncBatchNorm.convert_sync_batchnorm(resnet50)
 resnet50 = DDP(resnet50, device_ids=[args.local_rank], output_device=args.local_rank)
 ARC.cuda()
-ARC=torch.nn.SyncBatchNorm.convert_sync_batchnorm(ARC)
+#ARC=torch.nn.SyncBatchNorm.convert_sync_batchnorm(ARC)
 ARC=DDP(ARC, device_ids=[args.local_rank], output_device=args.local_rank)
 softmax=nn.LogSoftmax(dim=0).cuda()
 loss_function = nn.CrossEntropyLoss().cuda()
 # CrossEntropy = LogSoftmax + NLLLoss
 #loss_function = nn.NLLLoss().cuda()
-optimizer = torch.optim.SGD([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
+if(OPTIM=='Adam'):
+    optimizer = torch.optim.Adam([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
+                                    lr=LR, weight_decay=5e-4)
+elif(OPTIM=='SGD'):
+    optimizer = torch.optim.SGD([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
                                     lr=LR, weight_decay=5e-4,momentum=0.9)
+
 scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.1)
 
 def accuracy(output, target, topk=(1, )):
@@ -294,7 +341,7 @@ def train_and_valid(model, optimizer, epochs=25):
             arc_outputs = ARC(features,labels)
             arc_loss=loss_function(arc_outputs,labels)
             loss=arc_loss
-            torch.distributed.barrier()
+            #torch.distributed.barrier()
             loss.backward()
             optimizer.step()
             
@@ -339,9 +386,7 @@ def train_and_valid(model, optimizer, epochs=25):
                 loss=arc_loss
                 loss=loss.mean()
 
-
                 arc_outputs=softmax(arc_outputs)
-
 
                 valid_loss += loss.item() * inputs.size(0)
                 # TOP1

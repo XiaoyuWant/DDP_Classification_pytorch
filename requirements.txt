@@ -3,4 +3,6 @@ tqdm
 typing_extensions
 
 export CUDA_HOME=/usr/local/cuda
+gcc > 5.0
+
 pip install git+https://github.com/mapillary/inplace_abn.git@v1.0.12
