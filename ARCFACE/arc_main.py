@@ -94,25 +94,10 @@ trainDatapath=Folder+'train'
 valDatapath=Folder+'test'
 BATCH_SIZE = args.batchsize
 NUM_CLASS = 2173
-LR = 0.01
+LR = 0.0001
 NUM_EPOCH = 100
 PIN_MEM=False
 OPTIM=args.optimizer
-
-
-# Load Dataset 
-# 2-8 分割
-# full_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
-# train_size=int(len(full_dataset)*0.9)
-# val_size=len(full_dataset)-train_size
-# train_dataset,val_dataset=torch.utils.data.random_split(full_dataset,[train_size,val_size])
-# 单独的 train test
-
-# For Large Dataset Need Write a new Dataloader because torchvision.ImageFolder has a problem
-
-# class DataLoaderX(DataLoader):
-#     def __iter__(self):
-#         return BackgroundGenerator(super().__iter__())
 
 
 
@@ -194,14 +179,16 @@ class ImageFolderMy(torch.utils.data.Dataset):
     def __init__(self,root,transform):
         classes=glob.glob(root+"/*")
         #print(classes)
+        # TEST ON 50 CLS
+        #classes=classes[:200]
         self.transform=transform
         self.imgs=[]
         self.labels=[]
         for i in range(len(classes)):
             one=classes[i]
             imgs=glob.glob(one+'/*.jpg')
-            if(len(imgs)>200):
-                imgs=imgs[:200]
+            if(len(imgs)>400):
+                imgs=imgs[:400]
             #print("img len:",len(imgs))
             labels=[i for _ in range(len(imgs))]
             #print("img len:",len(labels))
@@ -238,8 +225,8 @@ if(args.model=='resnet50'):
     fc_inputs = resnet50.fc.in_features
     resnet50.fc = nn.Sequential(
         nn.Linear(fc_inputs, 256),
-        # nn.ReLU(),
-        # nn.Linear(512, NUM_CLASS),
+        nn.ReLU(),
+        nn.Linear(256, 256),
         # nn.LogSoftmax(dim=1)
     )
 # elif(args.model=='tresnet'):
@@ -249,10 +236,10 @@ ARC=ArcMarginProduct(256,NUM_CLASS, s=30, m=0.5, easy_margin=False)
 
 # Distributed to device
 resnet50.cuda()
-#resnet50 = torch.nn.SyncBatchNorm.convert_sync_batchnorm(resnet50)
+resnet50 = torch.nn.SyncBatchNorm.convert_sync_batchnorm(resnet50)
 resnet50 = DDP(resnet50, device_ids=[args.local_rank], output_device=args.local_rank)
 ARC.cuda()
-#ARC=torch.nn.SyncBatchNorm.convert_sync_batchnorm(ARC)
+ARC=torch.nn.SyncBatchNorm.convert_sync_batchnorm(ARC)
 ARC=DDP(ARC, device_ids=[args.local_rank], output_device=args.local_rank)
 softmax=nn.LogSoftmax(dim=0).cuda()
 loss_function = nn.CrossEntropyLoss().cuda()
@@ -260,7 +247,7 @@ loss_function = nn.CrossEntropyLoss().cuda()
 #loss_function = nn.NLLLoss().cuda()
 if(OPTIM=='Adam'):
     optimizer = torch.optim.Adam([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
-                                    lr=LR, weight_decay=5e-4)
+                                    lr=LR)
 elif(OPTIM=='SGD'):
     optimizer = torch.optim.SGD([{'params': resnet50.parameters()}, {'params': ARC.parameters()}],
                                     lr=LR, weight_decay=5e-4,momentum=0.9)
@@ -310,11 +297,9 @@ def WarmUp(model,optimizer,target_lr,iter):
             loss.backward()
             reduce_loss(loss, global_rank, world_size)
             optimizer.step()
-    return 0
 
 
-
-def train_and_valid(model, optimizer, epochs=25):
+def train_and_valid(model,ARC, optimizer, epochs=25):
 
     # warmup
     #WarmUp(model,optimizer,LR,20000)
@@ -339,18 +324,17 @@ def train_and_valid(model, optimizer, epochs=25):
             optimizer.zero_grad()
             features= model(inputs)
             arc_outputs = ARC(features,labels)
-            arc_loss=loss_function(arc_outputs,labels)
-            loss=arc_loss
+            loss=loss_function(arc_outputs,labels)
             #torch.distributed.barrier()
             loss.backward()
             optimizer.step()
             
 
             # New Cal of ACC
-            record_gap=20
-            if(i%record_gap==record_gap-1 and args.local_rank==0):
+            record_freq=10
+            if(i%record_freq==record_freq-1 and args.local_rank==0):
                 #print(arc_outputs)
-                arc_outputs=softmax(arc_outputs)
+                #arc_outputs=softmax(arc_outputs)
                 ret, predictions = torch.max(arc_outputs, 1)
                 correct_counts = torch.eq(predictions, labels).sum().float().item()
                 acc1 = correct_counts/inputs.size(0)
@@ -359,11 +343,11 @@ def train_and_valid(model, optimizer, epochs=25):
                 predictions = predictions.t()
                 correct_counts = predictions.eq(labels.view(1,-1).expand_as(predictions)).sum().item()
                 acc_topk = correct_counts/inputs.size(0)
-                etaTime=(time.time()-ttime)*(len(train_data)-i)/record_gap # not accurate
+                etaTime=(time.time()-ttime)*(len(train_data)-i)/record_freq # not accurate
                 loss=loss.mean()
-                ETAtime=(1-(i/len(train_data)))*(time.time()-ttime)*(len(train_dataset)/BATCH_SIZE)/record_gap/60
-                info="{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}\tarc:{:.4f}\ttime:{:.2f}S\tETA:{:.2f}Min".format(
-                    epoch,i,acc1*100,acc_topk*100,loss,arc_loss, time.time()-ttime,ETAtime
+                ETAtime=(1-(i/len(train_data)))*(time.time()-ttime)*(len(train_dataset)/BATCH_SIZE)/record_freq/60
+                info="{}/{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}\ttime:{:.2f}S\tETA:{:.2f}Min".format(
+                    epoch,i,acc1*100,acc_topk*100,loss, time.time()-ttime,ETAtime
                 )
                 print('\r',info,end=' ',flush=True)
                 ttime=time.time()
@@ -386,7 +370,7 @@ def train_and_valid(model, optimizer, epochs=25):
                 loss=arc_loss
                 loss=loss.mean()
 
-                arc_outputs=softmax(arc_outputs)
+                #arc_outputs=softmax(arc_outputs)
 
                 valid_loss += loss.item() * inputs.size(0)
                 # TOP1
@@ -405,18 +389,18 @@ def train_and_valid(model, optimizer, epochs=25):
 
                 #记录loss
                 if(j%100==99):
-                    print("Val Loss for {} : {:.5f}\t Top-1 Acc {}%\t Top-3 Acc {}%".format(j,loss,acc*100,acc_topk*100))
+                    print("test loss for {} : {:.5f}\t Top-1 Acc {}%\t Top-3 Acc {}%".format(j,loss,acc*100,acc_topk*100))
             loss_of_val=valid_loss*world_size/len(val_dataset)
             top1_of_val=V_count*world_size/len(val_dataset)
             top3_of_val=V_k_count*world_size/len(val_dataset)
-            print("VAL:{}\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}".format(
+            print("[VAL:epoch{}]\tTop1:{:.2f}%\tTop3:{:.2f}%\tL:{:.5f}".format(
                         epoch,top1_of_val*100,top3_of_val*100,loss_of_val
                     ))
 
 
             # 保存记录
             with open("output.txt",'a') as f:
-                text="Epoch{}\tTop1:\t{}\tTop3:\t{}\n".format(epoch,top1_of_val*100,top3_of_val*100 )
+                text="[Epoch{}]\tTop1:\t{}\tTop3:\t{}\n".format(epoch,top1_of_val*100,top3_of_val*100 )
                 f.write(text)
 
 
@@ -430,4 +414,4 @@ def train_and_valid(model, optimizer, epochs=25):
     return model, history
 
 
-trained_model, history = train_and_valid(resnet50, optimizer, NUM_EPOCH)
+trained_model, history = train_and_valid(resnet50,ARC, optimizer, NUM_EPOCH)
