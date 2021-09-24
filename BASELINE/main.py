@@ -168,6 +168,7 @@ def accuracy(output, target, topk=(1, )):
         return res
 
 def WarmUp(model,optimizer,target_lr,iter):
+    # 关于warmup的复现
     if(args.local_rank==0):
         print("Warm up for iterations of:",str(iter))
     model.train()
@@ -196,6 +197,7 @@ def WarmUp(model,optimizer,target_lr,iter):
     return 0
 
 def getAcc(outputs,labels,batchsize):
+    # 通过outputs和labels计算top1 / top3
     ret, predictions = torch.max(outputs, 1)
     correct_counts = torch.eq(predictions, labels).sum().float().item()
     acc1 = correct_counts/batchsize
@@ -263,7 +265,9 @@ def train_and_valid(model, optimizer, epochs=25):
             print("Epoch: {}/{}".format(epoch+1, epochs))
             print("This epoch is {} iterations".format(len(train_data)))
         model.train()
- 
+        # 更改trainloader_sampler
+        train_data.sampler.set_epoch(epoch)
+        
         ttime=time.time()
         for i, (inputs, labels) in enumerate(train_data):
             inputs = inputs.cuda(non_blocking=True)
@@ -298,7 +302,7 @@ def train_and_valid(model, optimizer, epochs=25):
                 #print(info)
                 ttime=time.time()
 
-        
+        # 测试结果
         ValidModel(model,epoch)
 
         if not os.path.exists("resnetmodels"):
