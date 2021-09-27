@@ -94,7 +94,7 @@ trainDatapath=Folder+'train'
 valDatapath=Folder+'test'
 BATCH_SIZE = args.batchsize
 NUM_CLASS = 2173
-LR = 0.0001
+LR = 0.001
 NUM_EPOCH = 100
 PIN_MEM=False
 OPTIM=args.optimizer
@@ -224,14 +224,14 @@ if(args.model=='resnet50'):
     resnet50 = models.resnet50(pretrained=True)
     fc_inputs = resnet50.fc.in_features
     resnet50.fc = nn.Sequential(
-        nn.Linear(fc_inputs, 256),
+        nn.Linear(fc_inputs, 512),
         nn.ReLU(),
-        nn.Linear(256, 256),
-        # nn.LogSoftmax(dim=1)
+        nn.Linear(512, 256),
+        nn.LogSoftmax(dim=1)
     )
 # elif(args.model=='tresnet'):
 #     resnet50  = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
-ARC=ArcMarginProduct(256,NUM_CLASS, s=30, m=0.5, easy_margin=False)
+ARC=ArcMarginProduct(256,NUM_CLASS, s=30, m=0.5, easy_margin=True)
 
 
 # Distributed to device
