@@ -477,8 +477,8 @@ if __name__ == '__main__':
     parser.add_argument('--nested', type=float, default=0.0, help='nested std hyperparameter')  
     parser.add_argument('--dropout', type=float, default=0.0, help='dropout ratio')  
     parser.add_argument('--resumePth', type=str, help='resume path')
-    # parser.add_argument('--freeze-bn', action='store_true', help='freeze the BN layers')  
-    parser.add_argument('--freeze-bn', default=False, help='freeze the BN layers') 
+    parser.add_argument('--freeze-bn', action='store_true', help='freeze the BN layers')  
+    #parser.add_argument('--freeze-bn', default=False, help='freeze the BN layers') 
     parser.add_argument('--pretrained', action='store_true', help='Start with ImageNet pretrained model (Pytorch Model Zoo)')
     
     args = parser.parse_args()
