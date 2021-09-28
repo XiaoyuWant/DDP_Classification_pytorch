@@ -48,8 +48,9 @@ parser.add_argument('--split_percentage', type=float, help='train and validation
 parser.add_argument('--gpu', type=int, help='ind of gpu', default=0)
 parser.add_argument('--weight_decay', type=float, help='l2', default=1e-3)
 parser.add_argument('--momentum', type=int, help='momentum', default=0.9)
-parser.add_argument('--batch_size', type=int, help='batch_size', default=16)
+parser.add_argument('--batch_size', type=int, help='batch_size', default=128)
 parser.add_argument('--train_len', type=int, help='the number of training data', default=54000)
+parser.add_argument('--folder',type=str)
 args = parser.parse_args()
 
 print(args)
@@ -259,8 +260,9 @@ def load_data(args):
                                     [0.229, 0.224, 0.225])
             ])
         }
-        trainDatapath='/root/commonfile/foodH/train'
-        valDatapath='/root/commonfile/foodH/test'
+        folder=args.folder
+        trainDatapath=folder+'/train'
+        valDatapath=folder+'/test'
         train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
         val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
         test_dataset=val_dataset
