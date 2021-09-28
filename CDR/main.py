@@ -1,3 +1,4 @@
+from functools import total_ordering
 import os
 import torch
 import torch.nn as nn
@@ -22,6 +23,8 @@ import datetime
 # import tools
 import time
 import warnings
+import glob
+from PIL import Image
 
 warnings.filterwarnings('ignore')
 
@@ -61,174 +64,39 @@ torch.cuda.manual_seed(args.seed)
 # Hyper Parameters
 learning_rate = args.lr
 NUM_CLASS=2173
+
+
+class ImageFolderMy(torch.utils.data.Dataset):
+    def __init__(self,root,transform,imgsLimited=500):
+        classes=glob.glob(root+"/*")
+        #print(classes)
+        classes=classes[:100]
+        self.transform=transform
+        self.imgs=[]
+        self.labels=[]
+        for i in range(len(classes)):
+            one=classes[i]
+            imgs=glob.glob(one+'/*.jpg')
+            if(len(imgs)>imgsLimited):
+                imgs=imgs[:imgsLimited]
+            #print("img len:",len(imgs))
+            labels=[i for _ in range(len(imgs))]
+            #print("img len:",len(labels))
+            self.imgs+=imgs
+            self.labels+=labels
+    def __getitem__(self,index):
+        img=self.imgs[index]
+        label=self.labels[index]
+        img=Image.open(img).convert('RGB')
+        img=self.transform(img)
+        return img,label
+    def __len__(self):
+        return len(self.labels)
 # load dataset
 def load_data(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
-    
-    # if args.dataset=='fmnist':
-    #     args.channel = 1
-    #     args.feature_size = 28 * 28
-    #     args.num_classes = 10
-    #     args.n_epoch = 100
-    #     args.batch_size = 32
-    #     args.num_gradual = 10
-    #     args.train_len = int(60000 * 0.9)
-    #     train_dataset = data_load.fmnist_dataset(True,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.1307, ),(0.3081, )),]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-    #     val_dataset = data_load.fmnist_dataset(False,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.1307, ),(0.3081, )),]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-
-    #     test_dataset = data_load.fmnist_test_dataset(
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.1307, ),(0.3081, )),]),
-    #                                     target_transform=tools.transform_target)
-    
-    
-    # if args.dataset=='mnist':
-    #     args.channel = 1
-    #     args.feature_size = 28 * 28
-    #     args.num_classes = 10
-    #     args.n_epoch = 100
-    #     args.batch_size = 32
-    #     args.num_gradual = 10
-    #     args.train_len = int(60000 * 0.9)
-    #     train_dataset = data_load.mnist_dataset(True,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.1307, ),(0.3081, )),]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-    #     val_dataset = data_load.mnist_dataset(False,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.1307, ),(0.3081, )),]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-
-    #     test_dataset = data_load.mnist_test_dataset(
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.1307, ),(0.3081, )),]),
-    #                                     target_transform=tools.transform_target)
-        
-        
-    
-    # if args.dataset=='cifar10':
-    #     args.channel = 3
-    #     args.num_classes = 10
-    #     args.feature_size = 3 * 32 * 32
-    #     args.n_epoch = 200
-    #     args.batch_size = 64
-    #     args.num_gradual = 20
-    #     args.train_len = int(50000 * 0.9)
-    #     train_dataset = data_load.cifar10_dataset(True,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.RandomCrop(32, padding=4),
-    #                                     transforms.RandomHorizontalFlip(),
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.4914, 0.4822, 0.4465),(0.2023, 0.1994, 0.2010)),
-    #                                     ]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-    #     val_dataset = data_load.cifar10_dataset(False,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.4914, 0.4822, 0.4465),(0.2023, 0.1994, 0.2010)),
-    #                                     ]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-
-    #     test_dataset = data_load.cifar10_test_dataset(
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.4914, 0.4822, 0.4465),(0.2023, 0.1994, 0.2010)),
-    #                                     ]),
-    #                                     target_transform=tools.transform_target)
-    
-    
-    # if args.dataset=='cifar100':
-    #     args.channel = 3
-    #     args.num_classes = 100
-    #     args.feature_size = 3 * 32 * 32
-    #     args.n_epoch = 200
-    #     args.batch_size = 64
-    #     args.num_gradual = 20
-    #     args.train_len = int(50000 * 0.9)
-    #     train_dataset = data_load.cifar100_dataset(True,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.RandomCrop(32, padding=4),
-    #                                     transforms.RandomHorizontalFlip(),
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.4914, 0.4822, 0.4465),(0.2023, 0.1994, 0.2010)),
-    #                                     ]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-    #     val_dataset = data_load.cifar100_dataset(False,
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.4914, 0.4822, 0.4465),(0.2023, 0.1994, 0.2010)),
-    #                                     ]),
-    #                                     target_transform=tools.transform_target,
-    #                                     dataset=args.dataset,
-    #                                     noise_type=args.noise_type,
-    #                                     noise_rate=args.noise_rate,
-    #                                     split_per=args.split_percentage,
-    #                                     random_seed=args.seed)
-
-
-    #     test_dataset = data_load.cifar100_test_dataset(
-    #                                     transform = transforms.Compose([
-    #                                     transforms.ToTensor(),
-    #                                     transforms.Normalize((0.4914, 0.4822, 0.4465),(0.2023, 0.1994, 0.2010)),
-    #                                     ]),
-    #                                     target_transform=tools.transform_target)
-        
     
     #######
     # dataloader 
@@ -237,7 +105,7 @@ def load_data(args):
         args.num_classes = NUM_CLASS
         args.feature_size = 3 * 32 * 32
         args.n_epoch = 200
-        args.batch_size = 64*2
+        #args.batch_size = 64*2
         args.num_gradual = 20
         args.train_len = int(50000 * 0.9)
 
@@ -263,8 +131,8 @@ def load_data(args):
         folder=args.folder
         trainDatapath=folder+'/train'
         valDatapath=folder+'/test'
-        train_dataset=datasets.ImageFolder(root=trainDatapath,transform=image_transforms['train'])
-        val_dataset=datasets.ImageFolder(root=valDatapath,transform=image_transforms['val'])
+        train_dataset=ImageFolderMy(root=trainDatapath,transform=image_transforms['train'])
+        val_dataset=ImageFolderMy(root=valDatapath,transform=image_transforms['val'])
         test_dataset=val_dataset
 
         args.train_len=len(train_dataset)
@@ -294,6 +162,18 @@ def accuracy(logit, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
+def getAcc(outputs,labels,batchsize):
+    # 通过outputs和labels计算top1 / top3
+    ret, predictions = torch.max(outputs, 1)
+    correct_counts = torch.eq(predictions, labels).sum().float().item()
+    acc1 = correct_counts/batchsize
+    maxk = max((1,3))
+    ret,predictions = outputs.topk(maxk,1,True,True)
+    predictions = predictions.t()
+    correct_counts = predictions.eq(labels.view(1,-1).expand_as(predictions)).sum().item()
+    acc_topk = correct_counts/batchsize
+    return acc1,acc_topk
 
 
 def train_one_step(net, data, label, optimizer, criterion, nonzero_ratio, clip):
@@ -328,10 +208,11 @@ def train_one_step(net, data, label, optimizer, criterion, nonzero_ratio, clip):
     time4=time.time()
     optimizer.zero_grad()
     time5=time.time()
-    acc = accuracy(pred, label, topk=(1,))
+    #acc = accuracy(pred, label, topk=(1,))
+    prec1,prec3=getAcc(pred,label,label.size(0))
     time6=time.time()
     #print("time:1:{}\t2:{}\t3:{}\t4:{}\t5:{}".format(time2-time1,time3-time2,time4-time3,time5-time4,time6-time5))
-    return float(acc[0]), loss
+    return prec1,prec3, loss
 
 
 def train(train_loader, epoch, model1, optimizer1, args):
@@ -352,17 +233,18 @@ def train(train_loader, epoch, model1, optimizer1, args):
         data = data.cuda()
         labels = labels.cuda()
         # Forward + Backward + Optimize
-        logits1=model1(data)
-        prec1,  = accuracy(logits1, labels, topk=(1, ))
+        #logits1=model1(data)
+        #prec1, = accuracy(logits1, labels, topk=(1, ))
+        #prec1,prec3=getAcc(logits1,labels,labels.size(0))
         train_total+=1
-        train_correct+=prec1
+        
         # Loss transfer 
 
-        prec1, loss = train_one_step(model1, data, labels, optimizer1, nn.CrossEntropyLoss(), clip, clip)
-       
+        prec1,prec3, loss = train_one_step(model1, data, labels, optimizer1, nn.CrossEntropyLoss(), clip, clip)
+        train_correct+=prec1
         if (i+1) % args.print_freq == 0:
-            print('Epoch [%d/%d], Iter [%d/%d] Training Accuracy1: %.4F, Loss1: %.4f' 
-                  %(epoch+1, args.n_epoch, i+1, args.train_len//args.batch_size, prec1, loss.item()))
+            print('Epoch [%d/%d], Iter [%d/%d] Train Acc1: %.4F, Acc3: %.4F, Loss1: %.4f' 
+                  %(epoch+1, args.n_epoch, i+1, args.train_len//args.batch_size, prec1, prec3,loss.item()))
             print("Time:\t{} s".format(time.time()-st_time))
             st_time=time.time()
         
@@ -377,18 +259,28 @@ def evaluate(test_loader, model1):
     model1.eval()  # Change model to 'eval' mode.
     correct1 = 0
     total1 = 0
+    top3cnt=0
     with torch.no_grad():
         for data, labels in test_loader:
             data = data.cuda()
             logits1 = model1(data)
+            labels=labels.cuda()
             outputs1 = F.softmax(logits1, dim=1)
             _, pred1 = torch.max(outputs1.data, 1)
             total1 += labels.size(0)
-            correct1 += (pred1.cpu() == labels.long()).sum()
+            correct1 += (pred1 == labels.long()).sum()
+
+            maxk = max((1,3))
+            ret,predictions = outputs1.topk(maxk,1,True,True)
+            predictions = predictions.t()
+            correct_counts = predictions.eq(labels.view(1,-1).expand_as(predictions)).sum().item()
+            top3cnt += correct_counts
+            
 
         acc1 = 100 * float(correct1) / float(total1)
+        acc3=top3cnt*100/float(total1)
 
-    return acc1
+    return acc1,acc3
 
 
 def main(args):
@@ -432,23 +324,6 @@ def main(args):
     ###########
     #  此处加载模型 修改
 
-    # if args.dataset == 'mnist':
-    #     clf1 = LeNet()
-    #     optimizer1 = torch.optim.SGD(clf1.parameters(), lr=learning_rate, weight_decay=args.weight_decay, momentum=0.9)
-    #     scheduler1 = MultiStepLR(optimizer1, milestones=[10, 20], gamma=0.1)
-    # elif args.dataset == 'fmnist':
-    #     clf1 = resnet.ResNet50(input_channel=1, num_classes=10)
-    #     optimizer1 = torch.optim.SGD(clf1.parameters(), lr=learning_rate, weight_decay=args.weight_decay, momentum=0.9)
-    #     scheduler1 = MultiStepLR(optimizer1, milestones=[10, 20], gamma=0.1)
-    # elif args.dataset == 'cifar10':
-    #     clf1 = resnet.ResNet50(input_channel=3, num_classes=10)
-    #     optimizer1 = torch.optim.SGD(clf1.parameters(), lr=learning_rate, weight_decay=args.weight_decay, momentum=0.9)
-    #     scheduler1 = MultiStepLR(optimizer1, milestones=[40, 80], gamma=0.1)
-    # elif args.dataset == 'cifar100':
-    #     clf1 = resnet.ResNet50(input_channel=3, num_classes=100)
-    #     optimizer1 = torch.optim.SGD(clf1.parameters(), lr=learning_rate, weight_decay=args.weight_decay, momentum=0.9)
-    #     scheduler1 = MultiStepLR(optimizer1, milestones=[40, 80], gamma=0.1)
-    # # 添加的内容
     # el
     if args.dataset == 'food':
         # TODO 如果无法使用timm库，可加载torchvision的预训练模型
@@ -461,13 +336,13 @@ def main(args):
             nn.LogSoftmax(dim=1)
         )
         #clf1 = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
-        optimizer1 = torch.optim.AdamW(clf1.parameters(), lr=learning_rate)
+        optimizer1 = torch.optim.SGD(clf1.parameters(), lr=learning_rate,momentum=0.9)
         scheduler1 = MultiStepLR(optimizer1, milestones=[10, 20], gamma=0.1)
 
     clf1.cuda()
     
     with open(txtfile, "a") as myfile:
-        myfile.write('epoch train_acc1 val_acc1 test_acc1\n')
+        myfile.write('epoch\ttrain_acc1\tval_acc1\ttest_acc1\n')
 
     epoch = 0
     train_acc1 = 0
@@ -493,16 +368,16 @@ def main(args):
         clf1.train()
         
         train_acc1 = train(train_loader, epoch, clf1, optimizer1, args)
-        val_acc1 = evaluate(val_loader, clf1)
-        val_acc_list.append(val_acc1)
-        test_acc1 = evaluate(test_loader, clf1)
+        # val_acc1 = evaluate(val_loader, clf1)
+        # val_acc_list.append(val_acc1)
+        test_acc1,test_acc3= evaluate(test_loader, clf1)
         test_acc_list.append(test_acc1)
         
         # save results
-        print('Epoch [%d/%d] Test Accuracy on the %s test data: Model1 %.4f %% ' % (
-        epoch + 1, args.n_epoch, len(test_dataset), test_acc1))
+        print('Epoch [%d/%d] Test Accuracy on the %s test data: Model1 %.4f %%\t%.4f %%' % (
+        epoch + 1, args.n_epoch, len(test_dataset), test_acc1,test_acc3))
         with open(txtfile, "a") as myfile:
-            myfile.write(str(int(epoch)) + ' ' + str(train_acc1) + ' ' + str(val_acc1) + ' ' + str(test_acc1) + "\n")
+            myfile.write(str(int(epoch)) + '\t' + str(train_acc1) + '\t '+ str(test_acc1) +'\t'+str(test_acc3)+ "\n")
     id = np.argmax(np.array(val_acc_list))
     test_acc_max = test_acc_list[id]
     return test_acc_max

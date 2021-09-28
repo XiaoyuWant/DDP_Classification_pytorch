@@ -524,5 +524,5 @@ if __name__ == '__main__':
          mu = args.mu,         
          nested = 100,         
          resumePth = args.resumePth,
-         freeze_bn = False,        
+         freeze_bn = True,        
          pretrained = True)
