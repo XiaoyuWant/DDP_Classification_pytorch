@@ -64,10 +64,12 @@ def get_dataloader(dataset, train_dir, val_dir, batchsize):
                 transforms.ToTensor(),
                 transforms.Normalize(norm_mean, norm_std)])
 
-    full_dataset=ImageFolder(train_dir, transform_train)
-    train_size=int(len(full_dataset)*0.85)
-    val_size=len(full_dataset)-train_size
-    trainset,valset=torch.utils.data.random_split(full_dataset,[train_size,val_size])
+    # full_dataset=ImageFolder(train_dir, transform_train)
+    # train_size=int(len(full_dataset)*0.85)
+    # val_size=len(full_dataset)-train_size
+    # trainset,valset=torch.utils.data.random_split(full_dataset,[train_size,val_size])
+    trainset=ImageFolder(train_dir,transform_train)
+    valset=ImageFolder(val_dir,transform_val)
     trainloader = DataLoader(trainset, 
                              batch_size=batchsize, 
                              shuffle=True, 
@@ -381,17 +383,17 @@ def main(gpu, arch, dropout, out_dir, dataset, train_dir, val_dir, warmUpIter, l
         os.mkdir(out_dir)
 
     criterion = nn.CrossEntropyLoss()
-#     optimizer = [torch.optim.SGD(itertools.chain(*[net_feat.parameters()]), 
-#                                                 1e-6, 
-#                                                 momentum=args.momentum),
+    optimizer = [torch.optim.SGD(itertools.chain(*[net_feat.parameters()]), 
+                                                1e-4, 
+                                                momentum=args.momentum),
                                                 
-#                 torch.optim.SGD(itertools.chain(*[net_cls.parameters()]), 
-#                                                 1e-6, 
-#                                                 momentum=args.momentum)] # remove the weight decay in classifier
-    optimizer = [torch.optim.Adam(itertools.chain(*[net_feat.parameters()]), 
-                                                1e-6),
-                torch.optim.Adam(itertools.chain(*[net_cls.parameters()]), 
-                                                1e-6)]
+                torch.optim.SGD(itertools.chain(*[net_cls.parameters()]), 
+                                                1e-4, 
+                                                momentum=args.momentum)] # remove the weight decay in classifier
+    # optimizer = [torch.optim.Adam(itertools.chain(*[net_feat.parameters()]), 
+    #                                             1e-4),
+    #             torch.optim.Adam(itertools.chain(*[net_cls.parameters()]), 
+    #                                             1e-4)]
 
     # optimizer = [torch.optim.SGD(itertools.chain(*[net_feat.parameters()]), 
     #                                              1e-7, 
@@ -467,7 +469,7 @@ if __name__ == '__main__':
     parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
     parser.add_argument('--batchsize', type=int, default=128, help='batch size')
     parser.add_argument('--nbEpoch', type=int, default=150, help='nb epoch')
-    parser.add_argument('--lrSchedule', nargs='+', type=int, default=[30, 60,90,120], help='lr schedule') 
+    parser.add_argument('--lrSchedule', nargs='+', type=int, default=[20, 30,40,120], help='lr schedule') 
     parser.add_argument('--gpu', type=str, default='0', help='gpu devices')
 
     # model

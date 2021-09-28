@@ -50,7 +50,7 @@ def accuracy(output, target, topk=(1,)):
 # term_width = int(term_width)
 term_width=30
 
-TOTAL_BAR_LENGTH = 65.
+TOTAL_BAR_LENGTH = 20.
 last_time = time.time()
 begin_time = last_time
 
