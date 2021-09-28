@@ -450,16 +450,16 @@ def main(args):
     # el
     if args.dataset == 'food':
         # TODO 如果无法使用timm库，可加载torchvision的预训练模型
-        # clf1=tv_models.resnet50(pretrained=True
-        # fc_inputs = clf1.fc.in_features
-        # clf1.fc = nn.Sequential(
-        #     nn.Linear(fc_inputs, 512),
-        #     nn.ReLU(),
-        #     nn.Linear(512, NUM_CLASS),
-        #     # nn.LogSoftmax(dim=1)
-        # )
-        clf1 = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
-        optimizer1 = torch.optim.Adam(clf1.parameters(), lr=learning_rate, weight_decay=args.weight_decay)
+        clf1=tv_models.resnet50(pretrained=True
+        fc_inputs = clf1.fc.in_features
+        clf1.fc = nn.Sequential(
+            nn.Linear(fc_inputs, 512),
+            nn.ReLU(),
+            nn.Linear(512, NUM_CLASS),
+            nn.LogSoftmax(dim=1)
+        )
+        #clf1 = timm.create_model('tresnet_m_miil_in21k', pretrained=True,num_classes=NUM_CLASS)
+        optimizer1 = torch.optim.AdamW(clf1.parameters(), lr=learning_rate)
         scheduler1 = MultiStepLR(optimizer1, milestones=[10, 20], gamma=0.1)
 
     clf1.cuda()
