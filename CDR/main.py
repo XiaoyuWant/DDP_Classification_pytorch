@@ -452,7 +452,7 @@ def main(args):
     # el
     if args.dataset == 'food':
         # TODO 如果无法使用timm库，可加载torchvision的预训练模型
-        clf1=tv_models.resnet50(pretrained=True
+        clf1=tv_models.resnet50(pretrained=True)
         fc_inputs = clf1.fc.in_features
         clf1.fc = nn.Sequential(
             nn.Linear(fc_inputs, 512),
